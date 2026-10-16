@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from types import ModuleType
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from sglang.srt.arg_groups.overrides import resolving_view
 from sglang.srt.entrypoints.v1_loads import (
@@ -123,6 +123,9 @@ def _build_server_args(
         # Not a `server_args` field: `TokenizerManager` derives it, and the
         # rust ingress needs the same number for its total-token check.
         num_reserved_tokens=compute_num_reserved_tokens(),
+        tokenizer_model_max_length=_tokenizer_model_max_length(
+            scheduler.tokenizer, mc.context_len
+        ),
         # Launch-time facts Python's /server_info reports from
         # scheduler_info / the package — stamped here so the rust endpoint
         # can serve them statically (no scheduler round-trip).
@@ -141,6 +144,17 @@ def _build_server_args(
             else None
         ),
     )
+
+
+def _tokenizer_model_max_length(tokenizer: Any, context_len: int) -> int:
+    """`/v1/tokenize`'s `max_model_len`, as `OpenAIServingTokenize` reports
+    it: the tokenizer's `model_max_length`, or the context length when that is
+    not a 64-bit integer (an unset HF value is a 1e30 sentinel). The Rust
+    field is signed, so the bound stops at 2**63."""
+    max_model_len = getattr(tokenizer, "model_max_length", -1)
+    if isinstance(max_model_len, int) and -(2**63) <= max_model_len < 2**63:
+        return max_model_len
+    return context_len
 
 
 def _partition_cores(
